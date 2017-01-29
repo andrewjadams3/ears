@@ -1,5 +1,10 @@
 var Botkit = require('botkit')
+var moment = require('moment')
+var Promise = require('bluebird')
+var rp = require('request-promise')
 var _ = require('lodash')
+
+var config = require('./config')
 
 var token = process.env.SLACK_TOKEN
 
@@ -16,77 +21,55 @@ controller.spawn({
   if (err) {
     throw new Error(err)
   }
-
   console.log('Connected to Slack RTM')
 })
 
 var lastReplies = {
-  message: [],
+  reaction: [],
   emoji: [],
-  shoutout: []
+  shoutout: [],
+  griz: []
 }
 var choices = {
-  message: [
-    'Groovy! :griz-parrot:',
-    'That track is :fire: :fire: :fire:',
-    ':100: :100: :100:',
-    'Love it! :tunez-parrot:',
-    'So crunchy',
-    'Holy shit my face just melted',
-    'DJ turn it up!',
-    'This shit slaps',
-    ':pray: :pray: :pray:',
-    'Oh YES daddy!',
-    'Love this track so much',
-    'Yessss this is so nice!',
-    'Quality stuff',
-    "Damn son, where'd you find this?",
-    'Damn this is sick',
-    'That second drop just killed me',
-    'I just got chills...',
-    'Unreal!',
-    'Certified banger',
-    'Dope track!',
-    'Now this is what I call music!',
-    'Jesus fuck',
-    "It's lit fam!"
-  ],
-  emoji: [
-    'fire',
-    'griz-parrot',
-    'party-parrot',
-    'tunez-parrot',
-    'fast-parrot',
-    'stable-parrot',
-    '+1',
-    'upside_down_face',
-    'dizzy_face',
-    'grinning',
-    'sunglasses',
-    'pray',
-    'raised_hands',
-    'ok_hand',
-    'saxophone',
-    '100'
-  ],
-  shoutout: [
-    'Right back at ya! :griz-parrot:',
-    'You da real MVP!',
-    'Aw, thanks! :blush:'
-  ]
+  reaction: config.REACTIONS,
+  emoji: config.EMOJIS,
+  shoutout: config.SHOUTOUTS,
+  griz: null
 }
 
 var randomReply = function (type) {
   var maxReplies = choices[type].length > 5 ? 5 : choices[type].length - 1
-  var newReply = null
-  while (!newReply || _.includes(lastReplies[type], newReply)) {
-    newReply = choices[type][Math.floor(Math.random() * choices[type].length)]
+  var index = null
+  while (index === null || _.includes(lastReplies[type], index)) {
+    index = Math.floor(Math.random() * choices[type].length)
   }
-  lastReplies[type].push(newReply)
+  lastReplies[type].push(index)
   if (lastReplies[type].length > maxReplies) {
     lastReplies[type].shift()
   }
-  return newReply
+  return choices[type][index]
+}
+
+var lastGrizFetch = new Date()
+var getGrizTracks = function () {
+  return new Promise(function (resolve, reject) {
+    var isCacheStale = moment(lastGrizFetch).isBefore(new Date(), 'day')
+    if (!choices.griz || isCacheStale) {
+      console.info('Fetching Griz tracks from Spotify API')
+      var options = {
+        uri: 'https://api.spotify.com/v1/artists/25oLRSUjJk4YHNUsQXk7Ut/top-tracks?country=US',
+        json: true
+      }
+      rp(options)
+        .then(function (response) {
+          var tracks = _.map(response.tracks, 'external_urls.spotify')
+          resolve(choices.griz = tracks)
+        })
+    } else {
+      console.info('Fetching Griz tracks from cache')
+      resolve(choices.griz)
+    }
+  })
 }
 
 controller.on('bot_channel_join', function (bot, message) {
@@ -118,7 +101,15 @@ controller.hears(songLinks, ['ambient'], function (bot, message) {
   })
 })
 
+controller.hears('griz me', ['direct_mention', 'mention'], function (bot, message) {
+  console.info('Finding Griz tune %s', message.ts)
+  bot.reply(message, 'Coming right up...')
+  getGrizTracks().then(function() {
+    bot.reply(message, randomReply('griz'))
+  })
+})
+
 controller.on(['direct_mention', 'mention'], function (bot, message) {
   console.info('Replying to mention %s', message.ts)
-  bot.reply(message, randomReply('message'))
+  bot.reply(message, randomReply('reaction'))
 })
